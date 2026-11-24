@@ -57,6 +57,14 @@ jobs:
           curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.11-gha/brine-linux-amd64 -o /usr/local/bin/brine
           chmod +x /usr/local/bin/brine
 
+      - name: Start brine serve (ccache fronting the GHA cache)
+        run: |
+          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
+          nohup brine serve --port 7899 > /tmp/brine-serve.log 2>&1 &
+          sleep 1
+          curl -s http://localhost:7899/stats | head -2 || cat /tmp/brine-serve.log
+          echo "RESULT serve_started=1"
+
       - name: 'build mbedtls under brine (receipt-cached on tarball content)'
         env:
           BRINE_GH_TOKEN: ${{ github.token }}
