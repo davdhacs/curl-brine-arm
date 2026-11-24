@@ -48,7 +48,7 @@ jobs:
         run: |
           sudo apt-get -o Dpkg::Use-Pty=0 update
           sudo apt-get -o Dpkg::Use-Pty=0 install -y \
-            libtool autoconf automake pkgconf libpsl-dev zlib1g-dev libbrotli-dev libzstd-dev libnghttp2-dev
+            libtool autoconf automake pkgconf libpsl-dev zlib1g-dev libbrotli-dev libzstd-dev libnghttp2-dev ccache
 
       - uses: davdhacs/brine/.github/actions/env-bootstrap@master
 
@@ -85,27 +85,32 @@ jobs:
           E=$(date +%s%3N)
           echo "RESULT phase=dep_build ms=$((E-T0))"
 
-      - name: Build curl under brine (receipt on the git closure)
+      - name: "Build curl with ccache through brine serve (the incremental layer)"
         env:
           LDFLAGS: -Wl,-rpath,/home/runner/deps/pkg/mbedtls/lib
-          BRINE_GH_TOKEN: ${{ github.token }}
         run: |
-          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           cd "$GITHUB_WORKSPACE"
-          # scope the snapshot to the deliverables
-          printf '{\n  "output_patterns": ["bld/src/curl", "bld/lib/.libs/*"]\n}\n' > .brine.json
+          # ccache: content-keyed per-object caching; unchanged .c files
+          # across commits are hits (fetch ~8ms vs compile ~50-150ms)
+          export CCACHE_DIR="$RUNNER_TEMP/ccache"
+          export CCACHE_REMOTE_STORAGE="http://localhost:7899"
+          export CC="ccache gcc"
           T0=$(date +%s%3N)
-          brine sh -c '
-            set -e
-            autoreconf -fi
-            mkdir bld && cd bld
-            ../configure --prefix="$HOME"/curl-install --enable-unity --enable-warnings --enable-werror --disable-static \
-              --disable-dependency-tracking --enable-option-checking=fatal \
-              --with-mbedtls="$HOME/deps/pkg/mbedtls" --enable-debug
-            make V=1
-          '
-          E=$(date +%s%3N)
-          echo "RESULT phase=curl_build ms=$((E-T0))"
+          autoreconf -fi
+          T1=$(date +%s%3N); echo "RESULT phase=autoreconf ms=$((T1-T0))"
+          mkdir bld && cd bld
+          ../configure --prefix="$HOME"/curl-install --enable-unity --enable-warnings --enable-werror --disable-static \
+            --disable-dependency-tracking --enable-option-checking=fatal \
+            --with-mbedtls="$HOME/deps/pkg/mbedtls" --enable-debug
+          T2=$(date +%s%3N); echo "RESULT phase=configure ms=$((T2-T1))"
+          make V=1
+          T3=$(date +%s%3N); echo "RESULT phase=make ms=$((T3-T2))"
+          ccache --show-stats > /tmp/ccache-stats.txt 2>&1 || true
+          cat /tmp/ccache-stats.txt | grep -iE "hit|miss" | head -6
+          D=$(ccache --print-stats 2>/dev/null | awk '/^cache_hit_direct/ {print $2}')
+          P=$(ccache --print-stats 2>/dev/null | awk '/^cache_hit_preprocessed/ {print $2}')
+          M=$(ccache --print-stats 2>/dev/null | awk '/^cache_miss/ {print $2}')
+          echo "RESULT ccache_hits direct=${D:-0} preprocessed=${P:-0} misses=${M:-0}"
 
       - name: Verify curl binary
         run: |
