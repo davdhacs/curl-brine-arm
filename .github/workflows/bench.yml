@@ -54,10 +54,12 @@ jobs:
 
       - name: Install brine
         run: |
-          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.9-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.10-gha/brine-linux-amd64 -o /usr/local/bin/brine
           chmod +x /usr/local/bin/brine
 
       - name: 'build mbedtls under brine (receipt-cached on tarball content)'
+        env:
+          BRINE_GH_TOKEN: ${{ github.token }}
         run: |
           export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           mkdir -p "$HOME/deps/pkg" && cd "$HOME/deps"
@@ -86,6 +88,7 @@ jobs:
       - name: Build curl under brine (receipt on the git closure)
         env:
           LDFLAGS: -Wl,-rpath,/home/runner/deps/pkg/mbedtls/lib
+          BRINE_GH_TOKEN: ${{ github.token }}
         run: |
           export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           cd "$GITHUB_WORKSPACE"
