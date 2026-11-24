@@ -28,7 +28,7 @@ jobs:
     steps:
       - name: Runner record + calibration probe
         run: |
-          { date -u +%FT%TZ; grep -m1 'model name' /proc/cpuinfo; echo "nproc=$(nproc)"; } | tee runner.txt
+          { date -u +%FT%TZ; grep -m1 'model name' /proc/cpuinfo; echo "nproc=$(nproc)"; } | tee "$RUNNER_TEMP/runner.txt"
           curl -sSfLO https://sqlite.org/2024/sqlite-amalgamation-3450100.zip
           unzip -q sqlite-amalgamation-3450100.zip
           cd sqlite-amalgamation-3450100
@@ -36,7 +36,7 @@ jobs:
             rm -f sqlite3.o
             S=$(date +%s%3N); gcc -O2 -c sqlite3.c; E=$(date +%s%3N)
             echo "calib_ms=$((E-S))"
-          done | tee ../calib.txt
+          done | tee "$RUNNER_TEMP/calib.txt"
 
       - name: Checkout curl at the target commit
         uses: actions/checkout@v4
@@ -84,6 +84,8 @@ jobs:
           echo "RESULT phase=dep_build ms=$((E-T0))"
 
       - name: Build curl under brine (receipt on the git closure)
+        env:
+          LDFLAGS: -Wl,-rpath,/home/runner/deps/pkg/mbedtls/lib
         run: |
           export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           cd "$GITHUB_WORKSPACE"
@@ -112,4 +114,4 @@ jobs:
           U=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
             "https://api.github.com/repos/davdhacs/curl-brine-arm/actions/cache/usage")
           printf 'RESULT quota_bytes=%s\n' "$(printf %s "$U" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_caches_size_in_bytes",""))')"
-          cat runner.txt calib.txt
+          cat "$RUNNER_TEMP/runner.txt" "$RUNNER_TEMP/calib.txt" 2>/dev/null || true
