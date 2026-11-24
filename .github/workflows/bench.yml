@@ -54,7 +54,7 @@ jobs:
 
       - name: Install brine
         run: |
-          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.1-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.2-gha/brine-linux-amd64 -o /usr/local/bin/brine
           chmod +x /usr/local/bin/brine
 
       - name: 'build mbedtls under brine (receipt-cached on tarball content)'
@@ -68,7 +68,7 @@ jobs:
           curl --disable --fail --silent --show-error --connect-timeout 15 --max-time 120 --retry 6 --retry-connrefused \
             --location --proto-redir =https "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/mbedtls-${MBEDTLS_VERSION}.tar.bz2" --output mbedtls.tar.bz2
           tar xf mbedtls.tar.bz2
-          printf '{\n  "output_patterns": ["pkg/**"]\n}\n' > .brine.json
+          printf '{\n  "closure": "key_files",\n  "key_files": ["mbedtls.tar.bz2"],\n  "output_patterns": ["pkg/**"]\n}\n' > .brine.json
           T0=$(date +%s%3N)
           brine sh -c '
             set -e
