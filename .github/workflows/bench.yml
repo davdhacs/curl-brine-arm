@@ -1,0 +1,109 @@
+name: bench
+# Arm B: brine receipts on the GHA-cache backend (same storage as
+# arm A, different keying strategy: content-addressed).
+# Dep build receipt: keyed on the mbedtls TARBALL CONTENT (the
+# pre-downloaded tarball is the input closure) — content-addressed
+# dep caching. Curl build receipt: keyed on the git closure of the
+# commit — full-build memoization (miss on new commits, hit on
+# re-runs of the same commit).
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'curl commit SHA to replay (default: HEAD~1)'
+        required: false
+        type: string
+
+permissions:
+  actions: write
+
+env:
+  MBEDTLS_VERSION: 4.3.0
+  MAKEFLAGS: -j 5
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Runner record + calibration probe
+        run: |
+          { date -u +%FT%TZ; grep -m1 'model name' /proc/cpuinfo; echo "nproc=$(nproc)"; } | tee runner.txt
+          curl -sSfLO https://sqlite.org/2024/sqlite-amalgamation-3450100.zip
+          unzip -q sqlite-amalgamation-3450100.zip
+          cd sqlite-amalgamation-3450100
+          for i in 1 2 3; do
+            rm -f sqlite3.o
+            S=$(date +%s%3N); gcc -O2 -c sqlite3.c; E=$(date +%s%3N)
+            echo "calib_ms=$((E-S))"
+          done | tee ../calib.txt
+
+      - name: Checkout curl at the target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || 'master~1' }}
+          fetch-depth: 0
+
+      - uses: davdhacs/brine/.github/actions/env-bootstrap@master
+
+      - name: Install brine
+        run: |
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.0-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          chmod +x /usr/local/bin/brine
+          brine --help 2>&1 | head -1 || true
+
+      - name: 'build mbedtls under brine (receipt-cached on tarball content)'
+        run: |
+          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
+          mkdir -p "$HOME/deps/pkg" && cd "$HOME/deps"
+          # pre-download the tarball: it IS the input closure (the
+          # receipt key = its content — version bumps and re-releases
+          # both miss, stricter than a version-string key)
+          curl --disable --fail --silent --show-error --connect-timeout 15 --max-time 120 --retry 6 --retry-connrefused \
+            --location --proto-redir =https "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/mbedtls-${MBEDTLS_VERSION}.tar.bz2" --output mbedtls.tar.bz2
+          printf '{\n  "output_patterns": ["pkg/**"]\n}\n' > .brine.json
+          T0=$(date +%s%3N)
+          brine sh -c '
+            set -e
+            tar xf mbedtls.tar.bz2
+            cd "mbedtls-'"$MBEDTLS_VERSION"'"
+            ./scripts/config.py set MBEDTLS_THREADING_C
+            ./scripts/config.py set MBEDTLS_THREADING_PTHREAD
+            cmake -B . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$HOME/deps/pkg/mbedtls" \
+              -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF
+            cmake --build .
+            cmake --install .
+          '
+          E=$(date +%s%3N)
+          echo "RESULT phase=dep_build ms=$((E-T0))"
+
+      - name: Build curl under brine (receipt on the git closure)
+        run: |
+          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
+          cd "$GITHUB_WORKSPACE"
+          # scope the snapshot to the deliverables
+          printf '{\n  "output_patterns": ["bld/src/curl", "bld/lib/.libs/*"]\n}\n' > .brine.json
+          T0=$(date +%s%3N)
+          brine sh -c '
+            set -e
+            autoreconf -fi
+            mkdir bld && cd bld
+            ../configure --prefix="$HOME"/curl-install --enable-unity --enable-warnings --enable-werror --disable-static \
+              --disable-dependency-tracking --enable-option-checking=fatal \
+              --with-mbedtls="$HOME/deps/pkg/mbedtls" --enable-debug
+            make V=1
+          '
+          E=$(date +%s%3N)
+          echo "RESULT phase=curl_build ms=$((E-T0))"
+
+      - name: Verify curl binary
+        run: |
+          "$GITHUB_WORKSPACE"/bld/src/curl --disable -V | head -2
+          echo "RESULT phase=verify ok=1"
+
+      - name: Record cache usage
+        run: |
+          U=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/davdhacs/curl-brine-arm/actions/cache/usage")
+          printf 'RESULT quota_bytes=%s\n' "$(printf %s "$U" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_caches_size_in_bytes",""))')"
+          cat runner.txt calib.txt
