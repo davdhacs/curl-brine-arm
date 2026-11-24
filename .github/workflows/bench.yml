@@ -54,7 +54,7 @@ jobs:
 
       - name: Install brine
         run: |
-          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.11-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.5.1-gha/brine-linux-amd64 -o /usr/local/bin/brine
           chmod +x /usr/local/bin/brine
 
       - name: Start brine serve (ccache fronting the GHA cache)
