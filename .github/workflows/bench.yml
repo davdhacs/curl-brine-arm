@@ -44,28 +44,34 @@ jobs:
           ref: ${{ inputs.commit || 'master~1' }}
           fetch-depth: 0
 
+      - name: Install prereqs (curl's own package list)
+        run: |
+          sudo apt-get -o Dpkg::Use-Pty=0 update
+          sudo apt-get -o Dpkg::Use-Pty=0 install -y \
+            libtool autoconf automake pkgconf libpsl-dev zlib1g-dev libbrotli-dev libzstd-dev libnghttp2-dev
+
       - uses: davdhacs/brine/.github/actions/env-bootstrap@master
 
       - name: Install brine
         run: |
-          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.0-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.1-gha/brine-linux-amd64 -o /usr/local/bin/brine
           chmod +x /usr/local/bin/brine
-          brine --help 2>&1 | head -1 || true
 
       - name: 'build mbedtls under brine (receipt-cached on tarball content)'
         run: |
           export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           mkdir -p "$HOME/deps/pkg" && cd "$HOME/deps"
-          # pre-download the tarball: it IS the input closure (the
-          # receipt key = its content — version bumps and re-releases
-          # both miss, stricter than a version-string key)
+          # download AND extract OUTSIDE the wrap: the extracted tree
+          # is the input closure (deterministic from the tarball).
+          # Extracting inside the wrap pollutes the observed read-set
+          # with files that won't exist at check time (found live).
           curl --disable --fail --silent --show-error --connect-timeout 15 --max-time 120 --retry 6 --retry-connrefused \
             --location --proto-redir =https "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/mbedtls-${MBEDTLS_VERSION}.tar.bz2" --output mbedtls.tar.bz2
+          tar xf mbedtls.tar.bz2
           printf '{\n  "output_patterns": ["pkg/**"]\n}\n' > .brine.json
           T0=$(date +%s%3N)
           brine sh -c '
             set -e
-            tar xf mbedtls.tar.bz2
             cd "mbedtls-'"$MBEDTLS_VERSION"'"
             ./scripts/config.py set MBEDTLS_THREADING_C
             ./scripts/config.py set MBEDTLS_THREADING_PTHREAD
