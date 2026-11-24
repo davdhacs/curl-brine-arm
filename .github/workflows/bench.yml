@@ -103,6 +103,10 @@ jobs:
           export CCACHE_DIR="$RUNNER_TEMP/ccache"
           export CCACHE_REMOTE_STORAGE="http://localhost:7899"
           export CC="ccache gcc"
+          # CRITICAL for ephemeral runners: hash the compiler CONTENT, not
+          # its mtime (default mtime differs on every fresh runner install,
+          # invalidating ALL remote hits — found by reading ccache -p output)
+          export CCACHE_COMPILERCHECK=content
           T0=$(date +%s%3N)
           autoreconf -fi
           T1=$(date +%s%3N); echo "RESULT phase=autoreconf ms=$((T1-T0))"
