@@ -93,32 +93,44 @@ jobs:
           E=$(date +%s%3N)
           echo "RESULT phase=dep_build ms=$((E-T0))"
 
-      - name: "Build curl with ccache through brine serve (the incremental layer)"
+      - name: "Build curl: receipt for configure, ccache for make (hybrid)"
         env:
           LDFLAGS: -Wl,-rpath,/home/runner/deps/pkg/mbedtls/lib
+          BRINE_GH_TOKEN: ${{ github.token }}
         run: |
           cd "$GITHUB_WORKSPACE"
-          # ccache: content-keyed per-object caching; unchanged .c files
-          # across commits are hits (fetch ~8ms vs compile ~50-150ms)
+          # Hybrid: brine receipt restores bld/ (configure results, .o files
+          # from the previous commit) in ONE bundle fetch; ccache handles
+          # per-file compilation for changed sources. The receipt eliminates
+          # configure's 50+ per-request remote lookups (the arm B bottleneck).
+          printf '{\n  "incremental": true,\n  "output_patterns": ["bld/**", "configure", "*.in", "missing", "install-sh", "compile", "depcomp", "aclocal.m4"]\n}\n' > .brine.json
+          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           export CCACHE_DIR="$RUNNER_TEMP/ccache"
           export CCACHE_REMOTE_STORAGE="http://localhost:7899"
-          export CC="ccache gcc"
-          # CRITICAL for ephemeral runners: hash the compiler CONTENT, not
-          # its mtime (default mtime differs on every fresh runner install,
-          # invalidating ALL remote hits — found by reading ccache -p output)
           export CCACHE_COMPILERCHECK=content
+          export CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime
+          export CC="ccache gcc"
+          STAMP=$(( $(git log -1 --format=%ct HEAD) - 30 ))
           T0=$(date +%s%3N)
-          autoreconf -fi
-          T1=$(date +%s%3N); echo "RESULT phase=autoreconf ms=$((T1-T0))"
-          mkdir bld && cd bld
-          ../configure --prefix="$HOME"/curl-install --enable-unity --enable-warnings --enable-werror --disable-static \
-            --disable-dependency-tracking --enable-option-checking=fatal \
-            --with-mbedtls="$HOME/deps/pkg/mbedtls" --enable-debug
-          T2=$(date +%s%3N); echo "RESULT phase=configure ms=$((T2-T1))"
-          make V=1
-          T3=$(date +%s%3N); echo "RESULT phase=make ms=$((T3-T2))"
-          ccache --show-stats > /tmp/ccache-stats.txt 2>&1 || true
-          cat /tmp/ccache-stats.txt | grep -iE "hit|miss" | head -6
+          if [ -f bld/Makefile ] && [ configure.ac -ot bld/Makefile ]; then
+            find bld -type f -exec touch -d @$STAMP {} +
+            git ls-files --others --exclude-standard -z | xargs -0 -r touch -d @$STAMP
+            git ls-files --others --ignored --exclude-standard -z | xargs -0 -r touch -d @$STAMP
+            make -C bld V=1 AUTOCONF=true AUTOMAKE=true AUTOHEADER=true
+            find bld -type f -exec touch {} +
+          else
+            autoreconf -fi
+            mkdir bld && cd bld
+            ../configure --prefix="$HOME"/curl-install --enable-unity --enable-warnings --enable-werror --disable-static \
+              --disable-dependency-tracking --enable-option-checking=fatal \
+              --with-mbedtls="$HOME/deps/pkg/mbedtls" --enable-debug
+            cd ..
+            find bld -type f -exec touch -d @$STAMP {} +
+            make -C bld V=1
+            find bld -type f -exec touch {} +
+          fi
+          E=$(date +%s%3N)
+          echo "RESULT phase=curl_build ms=$((E-T0))"
           D=$(ccache --print-stats 2>/dev/null | awk '/^cache_hit_direct/ {print $2}')
           P=$(ccache --print-stats 2>/dev/null | awk '/^cache_hit_preprocessed/ {print $2}')
           M=$(ccache --print-stats 2>/dev/null | awk '/^cache_miss/ {print $2}')
