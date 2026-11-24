@@ -54,12 +54,12 @@ jobs:
 
       - name: Install brine
         run: |
-          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.2-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.4.3-gha/brine-linux-amd64 -o /usr/local/bin/brine
           chmod +x /usr/local/bin/brine
 
       - name: 'build mbedtls under brine (receipt-cached on tarball content)'
         run: |
-          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1 BRINE_DEBUG=1
+          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
           mkdir -p "$HOME/deps/pkg" && cd "$HOME/deps"
           # download AND extract OUTSIDE the wrap: the extracted tree
           # is the input closure (deterministic from the tarball).
